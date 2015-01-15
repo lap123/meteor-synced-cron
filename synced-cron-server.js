@@ -54,10 +54,6 @@ Meteor.startup(function() {
 });
 
 
-var scheduleEntry = function(entry) {
-    entry._timer = SyncedCron._laterSetInterval(SyncedCron._entryWrapper(entry), entry);
-}
-
 // Add a scheduled job
 // SyncedCron.add({
 //   name: String, //*required* unique name of the job
@@ -73,9 +69,8 @@ SyncedCron.add = function(entry) {
     this._entries[entry.name] = entry;
 
     // If cron is already running, start directly.
-    if (this.running) {
-        scheduleEntry(entry);
-    }
+    if (this.running)
+        entry._timer = this._laterSetInterval(SyncedCron._entryWrapper(entry), entry);
 };
 
 // Start processing added jobs
@@ -84,7 +79,9 @@ SyncedCron.start = function() {
 
     Meteor.startup(function() {
         // Schedule each job with later.js
-        _.each(self._entries, scheduleEntry);
+        _.each(self._entries, function(entry) {
+            entry._timer = SyncedCron._laterSetInterval(SyncedCron._entryWrapper(entry), entry);
+        });
         self.running = true;
     });
 };
@@ -190,8 +187,8 @@ SyncedCron._reset = function() {
 
 // From: https://github.com/bunkat/later/blob/master/src/core/setinterval.js
 SyncedCron._laterSetInterval = function(fn, entry) {
-    var t = SyncedCron._laterSetTimeout(scheduleTimeout, entry),
-    done = false;
+    var t = SyncedCron._laterSetTimeout(scheduleTimeout, entry);
+    var done = false;
 
     /**
     * Executes the specified function and then sets the timeout for the next
@@ -218,13 +215,14 @@ SyncedCron._laterSetInterval = function(fn, entry) {
 // Adapted From: https://github.com/bunkat/later/blob/master/src/core/settimeout.js
 SyncedCron._laterSetTimeout = function(fn, entry) {
     var t;
+    scheduleTimeout();
 
     /**
     * Schedules the timeout to occur. If the next occurrence is greater than the
     * max supported delay (2147483647 ms) than we delay for that amount before
     * attempting to schedule the timeout again.
     */
-    (function() {
+    function scheduleTimeout() {
         var now = Date.now();
         var diff;
         var intendedAt;
@@ -249,13 +247,16 @@ SyncedCron._laterSetTimeout = function(fn, entry) {
         else
             throw new Meteor.Error("Invalid schedule type");
 
+        if (diff < 0)
+            return;
+        
         if (diff < 2147483647)
             t = Meteor.setTimeout(function() { fn(intendedAt); }, diff);
         else
             t = Meteor.setTimeout(scheduleTimeout, 2147483647);
 
         log.info('SyncedCron: scheduled "' + entry.name + '" next run @' + intendedAt);
-    })();
+    };
 
     return {
         clear: function() {
